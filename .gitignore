@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+/dist/*
+/lab/
+*.zip
+*.log
+/lab/logs/*
+/lab/temp/*
+/lab/renders/*
+*.blend1
+*.blend2
+# WIP handoff excludes all lab artifacts. Approved tests/baselines remain eligible.

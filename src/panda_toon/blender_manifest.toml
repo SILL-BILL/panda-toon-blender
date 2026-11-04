@@ -1,0 +1,10 @@
+schema_version = "1.0.0"
+id = "panda_toon"
+version = "0.1.0"
+name = "Panda Toon"
+tagline = "Three tone materials for EEVEE"
+maintainer = "Gonsaku"
+type = "add-on"
+blender_version_min = "5.1.0"
+blender_version_max = "5.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
