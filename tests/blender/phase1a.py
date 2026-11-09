@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""APPROVAL REQUIRED: isolated Blender 5.1.1 integration and render test."""
-import json
+"""APPROVAL REQUIRED: isolated Blender integration and render test."""
 import math
 from pathlib import Path
 import sys
@@ -9,19 +8,18 @@ from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lab_support import report, setup
+
 import panda_toon
 from panda_toon.material.service import create_material
 from panda_toon.nodes.core import inspect, update, TYPES
 
 
 def main():
-    assert bpy.app.version == (5, 1, 1), bpy.app.version_string
-    run = sys.argv[sys.argv.index("--") + 1]
-    assert run and all(c.isalnum() or c == "-" for c in run)
-    outputs = {name: ROOT / "lab" / name / run for name in ("scenes", "renders", "logs")}
-    assert not any(path.exists() for path in outputs.values()), "Output collision"
-    for path in outputs.values():
-        path.mkdir(parents=True)
+    run, stage, identity = setup()
+    assert stage in ("structure", "first", "remaining", "save")
+    outputs = {name: run / name for name in ("scenes", "renders")}
     panda_toon.register()
     panda_toon.unregister()
     panda_toon.register()
@@ -70,6 +68,12 @@ def main():
     p.texture = None
     assert nodes["tint"].inputs[0].default_value == 0
 
+    assert not p.last_error, p.last_error
+    if stage == "structure":
+        panda_toon.unregister()
+        report(run, stage, identity)
+        return
+
     # Only the factory scene in this disposable process is cleared.
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -112,37 +116,53 @@ def main():
     scene.camera = camera
 
     def render(name):
-        scene.render.filepath = str(outputs["renders"] / (name + ".png"))
-        bpy.ops.render.render(write_still=True)
+        assert not p.last_error, p.last_error
+        destination = outputs["renders"] / (name + ".png")
+        assert not destination.exists()
+        scene.render.filepath = str(destination)
+        assert bpy.ops.render.render(write_still=True) == {"FINISHED"}
+        with destination.open("rb") as stream:
+            assert stream.read(8) == b"\x89PNG\r\n\x1a\n"
+        assert destination.stat().st_size > 100
 
-    render("01-base")
-    sun.rotation_euler.z += math.radians(90)
-    render("02-light-direction")
-    p.threshold_low, p.threshold_high = .4, .8
-    render("03-thresholds")
-    p.base_color = (.8, .2, .1, 1)
-    render("04-base-color")
-    p.texture = image
-    render("05-texture")
+    if stage == "first":
+        render("01-base")
+    else:
+        sun.rotation_euler.z += math.radians(90)
+        if stage == "remaining":
+            render("02-light-direction")
+        p.threshold_low, p.threshold_high = .4, .8
+        if stage == "remaining":
+            render("03-thresholds")
+        p.base_color = (.8, .2, .1, 1)
+        if stage == "remaining":
+            render("04-base-color")
+        p.texture = image
+        if stage == "remaining":
+            render("05-texture")
+        p.mid_tone = .7
+        if stage == "remaining":
+            render("06-tone-multiplier")
+
+    if stage != "save":
+        panda_toon.unregister()
+        report(run, stage, identity)
+        return
+
     material_name = material.name
     blend_path = outputs["scenes"] / "phase1a.blend"
-    bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=True)
-    bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False, use_scripts=False)
-    scene = bpy.context.scene
+    assert not blend_path.exists()
+    assert bpy.context.preferences.filepaths.file_preview_type == "NONE"
+    assert bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=True) == {"FINISHED"}
+    assert bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False, use_scripts=False) == {"FINISHED"}
     restored = bpy.data.materials[material_name]
     assert restored.panda_toon.texture is not None
     assert abs(restored.panda_toon.threshold_high - .8) < 1e-6
     assert abs(restored.panda_toon.base_color[0] - .8) < 1e-6
     inspect(restored)
-    render("06-reloaded")
-    report = {"blender": bpy.app.version_string, "engine": scene.render.engine,
-              "view_transform": "Standard", "look": "None", "exposure": 0, "gamma": 1,
-              "sun_energy": 3, "structural_tests": "passed", "visual_acceptance": "pending",
-              "restart_and_installed_extension": "pending manual test"}
-    with (outputs["logs"] / "results.json").open("x", encoding="utf-8") as stream:
-        json.dump(report, stream, indent=2)
+    assert abs(restored.panda_toon.mid_tone - .7) < 1e-6
     panda_toon.unregister()
-    print("PASS: integration tests; visual and fresh-process acceptance still pending")
+    report(run, stage, identity)
 
 
 if __name__ == "__main__":

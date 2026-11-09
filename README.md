@@ -1,20 +1,19 @@
 # panda-toon-blender
 
 Panda Toon is an independently implemented three-zone toon material Extension
-for Blender 5.1 EEVEE. Phase 1A targets Blender **5.1.1**.
+for Blender EEVEE. Phase 1A validation targets Blender **5.2.3 LTS**,
+with 5.1.1 retained as the comparison baseline.
 
 License: **GNU GPL v3.0 or later**, SPDX `GPL-3.0-or-later`; see [LICENSE](LICENSE).
 The project owner approved replacing the initial AGPL license on 2026-10-25.
 
-Status: **WIP handoff, 2026-11-04 — not a completed release.** Blender 5.1.1
-structural/render/save-reload and isolated Extension installation/restart tests
-passed in prior approved runs. Rendering has provisional user acceptance.
-**Manual GUI verification is incomplete:** GUI startup installation reported
-`Package was expected to be installed but not found: panda_toon`; the subsequent
-enabled-state assertion failed. The cause is not yet established.
+**WIP.** On Blender 5.2.3 LTS (build `e13b728c6880`), six renders, scene
+save/reload and isolated GUI startup passed. Manual GUI parameter checks and
+formal Phase 1A acceptance are pending. One fresh installation succeeded.
+A subsequent fresh attempt failed with Windows `WinError 5` during directory rename.
 
-Start with [the current handoff notes](docs/handoff-2026-11-04.md) for known issues,
-evidence scope and next steps. No external Python packages are required.
+See [the current validation record](docs/phase1a-52-validation.md) for evidence,
+remaining issues and next steps. No external Python packages are required.
 
 After validation and installation, open Material Properties on a mesh and choose
 **New Panda Toon Material**. Existing slots and face assignments are preserved;
@@ -32,8 +31,6 @@ python -B -m unittest discover -s tests/unit -v
 
 Build a new ZIP with `python -B tools/build_extension.py` (refuses overwrite).
 This WIP contains no ZIPs, lab scenes, renders, caches or raw logs.
-**Do not run the historical Blender test launcher as the final validated procedure:**
-preview suppression, offline mode and later staged validation changes have not
-yet been integrated into it. Blender execution/installation requires separate
-approval. See the [handoff notes](docs/handoff-2026-11-04.md); older reports and
-the [validation plan](docs/validation-plan.md) describe earlier stages.
+Blender execution and installation require separate approval. Use the
+[staged procedure](docs/phase1a-52-validation.md). The
+[5.1.1 handoff](docs/handoff-2026-11-04.md) describes the earlier baseline.
