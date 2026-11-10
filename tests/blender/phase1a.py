@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """APPROVAL REQUIRED: isolated Blender integration and render test."""
 import math
+from array import array
 from pathlib import Path
 import sys
 import bpy
@@ -13,14 +14,106 @@ from lab_support import report, setup
 
 import panda_toon
 from panda_toon.material.service import create_material
-from panda_toon.nodes.core import inspect, update, TYPES
+from panda_toon.nodes.core import (
+    EDGES, LEGACY_EDGES, LEGACY_TYPES, LEGACY_VERSION, OWNER, SCHEMA, TYPES,
+    inspect, update,
+)
+
+
+def review_softness_scene(run):
+    scene_path = run / "scenes/softness-review.blend"
+    assert bpy.ops.wm.open_mainfile(filepath=str(scene_path), load_ui=False,
+                                  use_scripts=False) == {"FINISHED"}
+    sphere = bpy.context.scene.objects["PT_SoftnessSphere"]
+    inspect(sphere.active_material)
+    view_layer = bpy.context.view_layer
+    sphere.select_set(True)
+    view_layer.objects.active = sphere
+    for area in bpy.context.window_manager.windows[0].screen.areas:
+        if area.type == "PROPERTIES":
+            area.spaces.active.context = "MATERIAL"
+        elif area.type == "VIEW_3D":
+            area.spaces.active.shading.type = "RENDERED"
+            area.spaces.active.region_3d.view_perspective = "CAMERA"
+
+
+def check_softness(run, sphere, material, render):
+    settings = material.panda_toon
+    nodes = inspect(material)
+    stable = {role: node.as_pointer() for role, node in nodes.items()}
+    for width in (0, 1e-8, 0.3, 1):
+        settings.shadow_edge_softness = width
+        settings.threshold_high = settings.threshold_low
+        assert not settings.last_error, settings.last_error
+        for role in ("low", "high"):
+            assert nodes[f"{role}_select"].inputs[0].default_value == float(width > 0)
+            bounds = nodes[f"{role}_smooth"].inputs
+            assert bounds[1].default_value < 0 < bounds[2].default_value
+        assert stable == {role: node.as_pointer() for role, node in inspect(material).items()}
+    settings.threshold_high = .65
+    settings.shadow_edge_softness = 0
+
+    # Reconstruct the old graph on a disposable copy using the unchanged schema 1 contract.
+    legacy = material.copy()
+    legacy.name = "PT_Schema1_Reference"
+    legacy_nodes = inspect(legacy)
+    for role in TYPES.keys() - LEGACY_TYPES.keys():
+        assert legacy_nodes[role].get(OWNER) == role
+        legacy.node_tree.nodes.remove(legacy_nodes[role])
+    for a, b, c, d in LEGACY_EDGES:
+        if (a, b, c, d) not in EDGES:
+            legacy.node_tree.links.new(legacy_nodes[a].outputs[b], legacy_nodes[c].inputs[d])
+    legacy[SCHEMA] = LEGACY_VERSION
+    old_nodes = inspect(legacy)
+    legacy.panda_toon.threshold_low = .2
+    assert math.isclose(old_nodes["low"].inputs[1].default_value, .2, abs_tol=1e-6)
+    legacy.panda_toon.threshold_low = settings.threshold_low
+    assert not legacy.panda_toon.last_error, legacy.panda_toon.last_error
+    assert inspect(legacy) == old_nodes
+
+    def pixels(path):
+        image = bpy.data.images.load(str(path), check_existing=False)
+        try:
+            result = array("f", [0]) * len(image.pixels)
+            image.pixels.foreach_get(result)
+            return result
+        finally:
+            bpy.data.images.remove(image)
+
+    sphere.data.materials[0] = legacy
+    baseline = pixels(render("schema1-hard-reference"))
+    sphere.data.materials[0] = material
+    previous = baseline
+    for width in (0.00, 0.05, 0.15, 0.30):
+        settings.shadow_edge_softness = width
+        current = pixels(render(f"softness-{width:.2f}"))
+        assert (current == previous) == (width == 0), width
+        previous = current
+
+    settings.shadow_edge_softness = .15
+    material_name = material.name
+    blend_path = run / "scenes/softness.blend"
+    assert not blend_path.exists()
+    assert bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=True) == {"FINISHED"}
+    assert bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False,
+                                  use_scripts=False) == {"FINISHED"}
+    restored = bpy.data.materials[material_name]
+    assert math.isclose(restored.panda_toon.shadow_edge_softness, .15, abs_tol=1e-6)
+    assert inspect(restored)["low_select"].inputs[0].default_value == 1
+    restored.panda_toon.shadow_edge_softness = 0
+    assert not restored.panda_toon.last_error
+    assert inspect(restored)["low_select"].inputs[0].default_value == 0
 
 
 def main():
     run, stage, identity = setup()
-    assert stage in ("structure", "first", "remaining", "save")
+    assert stage in ("structure", "first", "remaining", "save", "softness", "softness-gui")
     outputs = {name: run / name for name in ("scenes", "renders")}
     panda_toon.register()
+    if stage == "softness-gui":
+        review_softness_scene(run)
+        report(run, stage, identity, manual_result="pending")
+        return
     panda_toon.unregister()
     panda_toon.register()
     sys.path.insert(0, str(ROOT / "tests/blender"))
@@ -124,7 +217,16 @@ def main():
         with destination.open("rb") as stream:
             assert stream.read(8) == b"\x89PNG\r\n\x1a\n"
         assert destination.stat().st_size > 100
+        return destination
 
+    if stage == "softness":
+        sphere.name = "PT_SoftnessSphere"
+        camera.rotation_euler = (sphere.location - camera.location).to_track_quat("-Z", "Y").to_euler()
+        camera.data.ortho_scale = 3.2
+        check_softness(run, sphere, material, render)
+        panda_toon.unregister()
+        report(run, stage, identity, zero_matches_schema1=True, saved_softness=.15)
+        return
     if stage == "first":
         render("01-base")
     else:

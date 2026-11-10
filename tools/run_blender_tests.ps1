@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory=$true)][guid]$RunId,
     [Parameter(Mandatory=$true)][ValidateSet('5.1.1','5.2.3')][string]$ExpectedVersion,
     [Parameter(Mandatory=$true)]
-    [ValidateSet('prepare','structure','first','remaining','save','install','restart','gui','gui-retry')]
+    [ValidateSet('prepare','structure','first','remaining','save','install','restart','gui','gui-retry','softness','softness-gui')]
     [string]$Stage
 )
 $ErrorActionPreference = 'Stop'
@@ -52,6 +52,9 @@ if ((Get-Content -LiteralPath (Join-Path $run 'logs\prepare.ok') -Raw) -ne $Expe
 }
 $previousStage = $stages[[array]::IndexOf($stages, $Stage) - 1]
 if ($Stage -eq 'gui-retry') { $previousStage = 'restart' }
+if ($Stage -eq 'softness') { $previousStage = 'structure' }
+if ($Stage -eq 'softness-gui') { $previousStage = 'softness' }
+if ($Stage -like 'softness*' -and $ExpectedVersion -ne '5.2.3') { throw 'Softness review requires Blender 5.2.3.' }
 if (-not (Test-Path -LiteralPath (Join-Path $run "logs\$previousStage.ok") -PathType Leaf)) {
     throw "Previous stage has not passed: $previousStage"
 }
@@ -61,13 +64,16 @@ $complete = Join-Path $run "logs\$Stage.ok"
 foreach ($file in @($log,$result,$complete)) {
     if (Test-Path -LiteralPath $file) { throw "Output already exists: $file" }
 }
-$gui = $Stage -in @('gui','gui-retry')
-$entry = if ($gui -or $Stage -in @('install','restart')) { 'verify_install.py' } else { 'phase1a.py' }
+$gui = $Stage -in @('gui','gui-retry','softness-gui')
+$entry = if ($Stage -in @('gui','gui-retry','install','restart')) { 'verify_install.py' } else { 'phase1a.py' }
 $arguments = @('--offline-mode','--disable-autoexec')
 if (-not $gui) { $arguments += '--background' }
-if (-not $gui -and $Stage -ne 'restart') { $arguments += '--factory-startup' }
+if ($Stage -notin @('gui','gui-retry','restart')) { $arguments += '--factory-startup' }
 $arguments += @('--python-exit-code','1','--python',(Join-Path $root "tests\blender\$entry"),'--',$run,$Stage,$ExpectedVersion)
-if ($gui) {
+if ($Stage -eq 'softness-gui') {
+    [IO.File]::Copy((Join-Path $run 'scenes\softness.blend'),
+        (Join-Path $run 'scenes\softness-review.blend'), $false)
+} elseif ($gui) {
     $sceneName = if ($Stage -eq 'gui-retry') { 'gui-review-retry.blend' } else { 'gui-review.blend' }
     $copy = Join-Path $run "scenes\$sceneName"
     [IO.File]::Copy((Join-Path $run 'scenes\phase1a.blend'), $copy, $false)

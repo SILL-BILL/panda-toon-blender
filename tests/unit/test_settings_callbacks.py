@@ -17,6 +17,7 @@ def load_settings():
         setattr(props, name, lambda **kwargs: kwargs)
     core = ModuleType("callback_tests.nodes.core")
     core.SCHEMA = "panda_toon_schema"
+    core.VERSION = 2
     core.update = Mock()
     path = Path(__file__).resolve().parents[2] / "src/panda_toon/material/settings.py"
     spec = importlib.util.spec_from_file_location("callback_tests.material.settings", path)
@@ -40,14 +41,19 @@ class CallbackTests(unittest.TestCase):
     def test_every_registered_update_has_exactly_two_arguments(self):
         callbacks = [v["update"] for v in self.module.PandaToonSettings.__annotations__.values()
                      if "update" in v]
-        self.assertEqual(len(callbacks), 7)
+        self.material["panda_toon_schema"] = 2
+        self.assertEqual(len(callbacks), 8)
         for callback in callbacks:
             with self.subTest(callback=callback.__name__):
                 self.assertEqual(callback.__code__.co_argcount, 2)
                 self.assertEqual(list(inspect.signature(callback).parameters), ["self", "context"])
                 self.assertIsNone(callback.__defaults__)
                 callback(self.settings, None)
-        self.assertEqual(self.module.update.call_count, 7)
+        self.assertEqual(self.module.update.call_count, 8)
+
+    def test_softness_callback_leaves_schema_one_alone(self):
+        self.module.changed_softness(self.settings, None)
+        self.module.update.assert_not_called()
 
     def test_threshold_callbacks_clamp_only_edited_threshold(self):
         self.settings.threshold_low = .9

@@ -18,7 +18,7 @@ def setup():
     assert run.name == f"migration-{UUID(hex=run.name.removeprefix('migration-')).hex}"
     assert version in ("5.1.1", "5.2.3")
     assert bpy.app.version == tuple(map(int, version.split("."))), bpy.app.version_string
-    assert bpy.app.background == (stage not in ("gui", "gui-retry"))
+    assert bpy.app.background == (stage not in ("gui", "gui-retry", "softness-gui"))
     assert not bpy.app.online_access
     for key in ("CONFIG", "SCRIPTS", "DATAFILES"):
         expected = run / "env" / ("BLENDER_USER_" + key)

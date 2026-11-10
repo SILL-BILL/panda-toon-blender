@@ -2,8 +2,9 @@
 """Owned, per-material shader graph. Updates never rebuild a graph."""
 OWNER = "panda_toon_owner"
 SCHEMA = "panda_toon_schema"
-VERSION = 1
-TYPES = {
+LEGACY_VERSION = 1
+VERSION = 2
+LEGACY_TYPES = {
     "diffuse": "ShaderNodeBsdfDiffuse", "rgb": "ShaderNodeShaderToRGB",
     "luma": "ShaderNodeRGBToBW", "low": "ShaderNodeMath",
     "high": "ShaderNodeMath", "dark": "ShaderNodeValue",
@@ -15,7 +16,7 @@ TYPES = {
     "tint": "ShaderNodeMixRGB", "shade": "ShaderNodeMixRGB",
     "emission": "ShaderNodeEmission", "output": "ShaderNodeOutputMaterial",
 }
-EDGES = [
+LEGACY_EDGES = [
     ("diffuse", 0, "rgb", 0), ("rgb", 0, "luma", 0),
     ("luma", 0, "low", 0), ("luma", 0, "high", 0),
     ("mid", 0, "mid_delta", 0), ("light", 0, "mid_delta", 1),
@@ -28,31 +29,59 @@ EDGES = [
     ("tint", 0, "shade", 1), ("tone", 0, "shade", 2),
     ("shade", 0, "emission", 0), ("emission", 0, "output", 0),
 ]
-OPERATIONS = {"low": "LESS_THAN", "high": "LESS_THAN",
+LEGACY_OPERATIONS = {"low": "LESS_THAN", "high": "LESS_THAN",
               "mid_delta": "SUBTRACT", "light_delta": "SUBTRACT",
               "mid_step": "MULTIPLY", "light_step": "MULTIPLY",
               "sum_mid": "ADD", "tone": "ADD"}
 
+BOUNDARIES = {"low": "light_step", "high": "mid_step"}
+TYPES = dict(LEGACY_TYPES)
+OPERATIONS = dict(LEGACY_OPERATIONS)
+EDGES = [edge for edge in LEGACY_EDGES if edge[0] not in BOUNDARIES]
+for boundary, step in BOUNDARIES.items():
+    offset, smooth, select = (f"{boundary}_{role}" for role in ("offset", "smooth", "select"))
+    TYPES.update({offset: "ShaderNodeMath", smooth: "ShaderNodeMapRange", select: "ShaderNodeMix"})
+    OPERATIONS[offset] = "SUBTRACT"
+    # Float Mix inputs are Factor, A, B at indices 0, 2, 3.
+    EDGES.extend([("luma", 0, offset, 0), (offset, 0, smooth, 0),
+                  (boundary, 0, select, 2), (smooth, 0, select, 3), (select, 0, step, 0)])
+
 
 def inspect(material):
-    if material.get(SCHEMA) != VERSION or material.node_tree is None:
+    version = material.get(SCHEMA)
+    if version == LEGACY_VERSION:
+        types, edges, operations = LEGACY_TYPES, LEGACY_EDGES, LEGACY_OPERATIONS
+    elif version == VERSION:
+        types, edges, operations = TYPES, EDGES, OPERATIONS
+    else:
+        raise ValueError("Not a supported Panda Toon material")
+    if material.node_tree is None:
         raise ValueError("Not a supported Panda Toon material")
     nodes = {}
     for node in material.node_tree.nodes:
         role = node.get(OWNER)
-        if role in TYPES:
-            if role in nodes or node.bl_idname != TYPES[role]:
+        if role in types:
+            if role in nodes or node.bl_idname != types[role]:
                 raise ValueError("Panda Toon graph ownership/type conflict")
             nodes[role] = node
-    if set(nodes) != set(TYPES):
+    if set(nodes) != set(types):
         raise ValueError("Panda Toon nodes are missing; create a new material")
-    for role, operation in OPERATIONS.items():
+    for role, operation in operations.items():
         if nodes[role].operation != operation or nodes[role].use_clamp:
             raise ValueError("Panda Toon math operation was edited")
     for role in ("tint", "shade"):
         if nodes[role].blend_type != "MULTIPLY" or nodes[role].use_clamp:
             raise ValueError("Panda Toon color operation was edited")
-    expected = {(nodes[a].outputs[b], nodes[c].inputs[d]) for a,b,c,d in EDGES}
+    if version == VERSION:
+        if any(node.mute for node in nodes.values()):
+            raise ValueError("Panda Toon nodes were muted")
+        for boundary in BOUNDARIES:
+            smooth = nodes[f"{boundary}_smooth"]
+            select = nodes[f"{boundary}_select"]
+            if (smooth.data_type != "FLOAT" or smooth.interpolation_type != "SMOOTHSTEP"
+                    or not smooth.clamp or select.data_type != "FLOAT"):
+                raise ValueError("Panda Toon softness operation was edited")
+    expected = {(nodes[a].outputs[b], nodes[c].inputs[d]) for a,b,c,d in edges}
     actual = {(link.from_socket, link.to_socket) for link in material.node_tree.links
               if link.to_node in nodes.values()}
     if actual != expected or not nodes["output"].is_active_output:
@@ -103,6 +132,12 @@ def build_new(material):
     for role in ("tint", "shade"):
         nodes[role].blend_type = "MULTIPLY"
         nodes[role].use_clamp = False
+    for boundary in BOUNDARIES:
+        smooth = nodes[f"{boundary}_smooth"]
+        smooth.data_type = "FLOAT"
+        smooth.interpolation_type = "SMOOTHSTEP"
+        smooth.clamp = True
+        nodes[f"{boundary}_select"].data_type = "FLOAT"
     for a,b,c,d in EDGES:
         material.node_tree.links.new(nodes[a].outputs[b], nodes[c].inputs[d])
     material[SCHEMA] = VERSION
@@ -115,6 +150,19 @@ def update(material):
     # Less-than masks: light + (mid-light)*[L<high] + (dark-mid)*[L<low].
     nodes["low"].inputs[1].default_value = p.threshold_low
     nodes["high"].inputs[1].default_value = p.threshold_high
+    if material[SCHEMA] == VERSION:
+        width = p.shadow_edge_softness
+        # Evaluate the range around zero to preserve narrow widths near either threshold.
+        # Give the unused smooth branch a finite, nonzero range at width zero.
+        half_width = max(width / 2, 2**-126) if width else 0.5
+        for boundary, threshold in (("low", p.threshold_low), ("high", p.threshold_high)):
+            nodes[f"{boundary}_offset"].inputs[1].default_value = threshold
+            inputs = nodes[f"{boundary}_smooth"].inputs
+            inputs[1].default_value = -half_width
+            inputs[2].default_value = half_width
+            inputs[3].default_value = 1.0
+            inputs[4].default_value = 0.0
+            nodes[f"{boundary}_select"].inputs[0].default_value = float(width > 0)
     nodes["dark"].outputs[0].default_value = p.dark_tone
     nodes["mid"].outputs[0].default_value = p.mid_tone
     nodes["light"].outputs[0].default_value = p.light_tone

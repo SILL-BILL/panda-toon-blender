@@ -141,8 +141,10 @@ def exercise_ui():
         def operator(self, name, **kwargs): self.operators.append(name)
         def label(self, **kwargs): pass
         def column(self): return self
-        def prop(self, data, name):
+        def prop(self, data, name, **kwargs):
             assert hasattr(data, name)
+            if name == 'shadow_edge_softness':
+                assert kwargs.get('slider') is True
             self.properties.append(name)
     from types import SimpleNamespace
     layout = LayoutRecorder()
@@ -151,7 +153,7 @@ def exercise_ui():
                SimpleNamespace(scene=bpy.context.scene, material=mat))
     assert layout.operators == ['panda_toon.create_material']
     assert layout.properties == ['base_color','texture','threshold_low','threshold_high',
-                                 'light_tone','mid_tone','dark_tone']
+                                 'shadow_edge_softness','light_tone','mid_tone','dark_tone']
     return mat, layout.properties
 
 if not gui:

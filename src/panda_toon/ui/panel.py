@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import bpy
 from ..material.service import create_material
-from ..nodes.core import SCHEMA, inspect
+from ..nodes.core import SCHEMA, VERSION, inspect
 
 
 class PANDA_TOON_OT_create(bpy.types.Operator):
@@ -50,8 +50,11 @@ class PANDA_TOON_PT_material(bpy.types.Panel):
             return
         col = layout.column()
         col.enabled = mat.is_editable
-        for name in ("base_color", "texture", "threshold_low", "threshold_high",
-                     "light_tone", "mid_tone", "dark_tone"):
+        for name in ("base_color", "texture", "threshold_low", "threshold_high"):
+            col.prop(mat.panda_toon, name)
+        if mat[SCHEMA] == VERSION:
+            col.prop(mat.panda_toon, "shadow_edge_softness", slider=True)
+        for name in ("light_tone", "mid_tone", "dark_tone"):
             col.prop(mat.panda_toon, name)
         if mat.panda_toon.last_error:
             layout.label(text=mat.panda_toon.last_error, icon="ERROR")

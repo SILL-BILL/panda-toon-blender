@@ -34,11 +34,11 @@ class ParameterTests(unittest.TestCase):
                     def evaluate(role):
                         if role in values:
                             return values[role]
-                        inputs = {d: evaluate(a) for a,b,c,d in core.EDGES if c == role}
+                        inputs = {d: evaluate(a) for a,b,c,d in core.LEGACY_EDGES if c == role}
                         if role in ("low", "high"):
                             inputs[1] = low if role == "low" else high
                         a, b = inputs[0], inputs[1]
-                        op = core.OPERATIONS[role]
+                        op = core.LEGACY_OPERATIONS[role]
                         result = {"LESS_THAN": lambda: float(a < b),
                                   "SUBTRACT": lambda: a - b, "ADD": lambda: a + b,
                                   "MULTIPLY": lambda: a * b}[op]()
@@ -47,6 +47,21 @@ class ParameterTests(unittest.TestCase):
                     self.assertAlmostEqual(evaluate("tone"),
                         parameters.tone_at(value, low, high, dark, mid, light))
 
+    def test_softness_is_centered_on_both_thresholds(self):
+        for value, expected in ((.15, .2), (.25, .35), (.35, .5),
+                                (.55, .5), (.65, .75), (.75, 1)):
+            self.assertAlmostEqual(parameters.tone_at(value, .25, .65, .2, .5, 1, .2),
+                                   expected)
+
+    def test_overlapping_and_equal_thresholds(self):
+        for low, high in ((.45, .55), (.5, .5), (0, 1)):
+            for width in (1e-8, .3, 1):
+                for value in (0, .49, .5, .51, 1, 3):
+                    self.assertGreaterEqual(parameters.tone_at(value, low, high, .2, .5, 1, width),
+                                            .2 - 1e-12)
+                    self.assertLessEqual(parameters.tone_at(value, low, high, .2, .5, 1, width), 1)
+                if low == high:
+                    self.assertAlmostEqual(parameters.tone_at(low, low, high, .2, 4, 1, width), .6)
 
 if __name__ == "__main__":
     unittest.main()
